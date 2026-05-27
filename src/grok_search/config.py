@@ -154,44 +154,11 @@ class Config:
         self._cached_model = self._apply_model_suffix(model)
         return self._cached_model
 
-    def set_model(self, model: str) -> None:
-        config_data = self._load_config_file()
-        config_data["model"] = model
-        self._save_config_file(config_data)
-        self._cached_model = self._apply_model_suffix(model)
-
     @staticmethod
     def _mask_api_key(key: str) -> str:
         """脱敏显示 API Key，只显示前后各 4 个字符"""
         if not key or len(key) <= 8:
             return "***"
         return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
-
-    def get_config_info(self) -> dict:
-        """获取配置信息（API Key 已脱敏）"""
-        try:
-            api_url = self.grok_api_url
-            api_key_raw = self.grok_api_key
-            api_key_masked = self._mask_api_key(api_key_raw)
-            config_status = "✅ 配置完整"
-        except ValueError as e:
-            api_url = "未配置"
-            api_key_masked = "未配置"
-            config_status = f"❌ 配置错误: {str(e)}"
-
-        return {
-            "GROK_API_URL": api_url,
-            "GROK_API_KEY": api_key_masked,
-            "GROK_MODEL": self.grok_model,
-            "GROK_DEBUG": self.debug_enabled,
-            "GROK_LOG_LEVEL": self.log_level,
-            "GROK_LOG_DIR": str(self.log_dir),
-            "TAVILY_API_URL": self.tavily_api_url,
-            "TAVILY_ENABLED": self.tavily_enabled,
-            "TAVILY_API_KEY": self._mask_api_key(self.tavily_api_key) if self.tavily_api_key else "未配置",
-            "FIRECRAWL_API_URL": self.firecrawl_api_url,
-            "FIRECRAWL_API_KEY": self._mask_api_key(self.firecrawl_api_key) if self.firecrawl_api_key else "未配置",
-            "config_status": config_status
-        }
 
 config = Config()
