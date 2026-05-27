@@ -1,5 +1,4 @@
 import sys
-import json
 from pathlib import Path
 
 # 支持直接运行：添加 src 目录到 Python 路径
@@ -21,6 +20,7 @@ except ImportError:
 
 import httpx
 import asyncio
+import json
 
 mcp = FastMCP("grok-search")
 
@@ -38,18 +38,24 @@ def _get_http_client() -> httpx.AsyncClient:
     name="web_search",
     output_schema=None,
     description="""
-    Performs a deep web search based on the given query and returns Grok's answer directly.
+Performs a deep web search based on the given query and returns Grok's answer directly.
 
-    This tool extracts sources if provided by upstream, caches them, and returns:
-    - session_id: string (When you feel confused or curious about the main content, use this field to invoke the get_sources tool to obtain the corresponding list of information sources)
-    - content: string (answer only)
-    - sources_count: int
+This tool extracts sources if provided by upstream, caches them, and returns:
+- session_id: string (When you feel confused or curious about the main content, use this field to invoke the get_sources tool to obtain the corresponding list of information sources)
+- content: string (answer only)
+- sources_count: int
+
+The `query` parameter accepts a JSON array of search queries. Each query is sent as a
+separate parallel request to the upstream API and results are merged with section headers.
+This ensures true parallel execution at the server level, avoiding the serialization that
+can occur when making multiple separate tool calls. Single query: '["q1"]'. Multiple:
+'["q1","q2","q3"]'.
     """,
     meta={"version": "2.0.0", "author": "guda.studio"},
 )
 async def web_search(
-    query: Annotated[str, "Clear, self-contained natural-language search query."],
-    platform: Annotated[str, "Target platform to focus on (e.g., 'Twitter', 'GitHub', 'Reddit'). Leave empty for general web search."] = "",
+    query: Annotated[str, 'JSON array of search queries, e.g. \'["q1"]\' or \'["q1","q2","q3"]\'. Each query is sent as a separate parallel request to the upstream API.'],
+    platform: Annotated[str, "Target platform to focus on (e.g., 'Twitter', 'GitHub, Reddit'). Leave empty for general web search."] = "",
     model: Annotated[str, "Optional model ID for this request only. This value is used ONLY when user explicitly provided."] = "",
 ) -> str:
     try:
@@ -62,7 +68,27 @@ async def web_search(
     if model:
         effective_model = model
 
-    grok_provider = GrokSearchProvider(api_url, api_key, effective_model, _get_http_client())
+    try:
+        query_list = json.loads(query)
+    except json.JSONDecodeError:
+        return "参数错误: query 必须是合法的 JSON 数组字符串"
+    if not isinstance(query_list, list) or not query_list:
+        return "参数错误: query 必须是非空 JSON 数组"
+
+    results = await asyncio.gather(*[
+        _search_single(q, api_url, api_key, effective_model, platform)
+        for q in query_list
+    ])
+    if len(query_list) == 1:
+        return results[0]
+    sections = []
+    for q, r in zip(query_list, results):
+        sections.append(f'## 🔍 "{q}"\n\n{r}')
+    return "\n\n---\n\n".join(sections)
+
+
+async def _search_single(query: str, api_url: str, api_key: str, model: str, platform: str) -> str:
+    grok_provider = GrokSearchProvider(api_url, api_key, model, _get_http_client())
 
     try:
         result = await grok_provider.search(query, platform)
@@ -70,7 +96,6 @@ async def web_search(
         return f"搜索失败: {str(e)}"
 
     if not result or not result.strip():
-        # 业务层重试：请求成功但内容为空
         try:
             result = await grok_provider.search(query, platform)
         except Exception as e:
